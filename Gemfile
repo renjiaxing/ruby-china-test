@@ -122,3 +122,6 @@ group :production do
   gem 'newrelic_rpm'
   gem 'newrelic_moped'
 end
+
+#用于统计浏览情况
+gem 'impressionist'

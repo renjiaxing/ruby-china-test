@@ -15,7 +15,7 @@ class Topic
   field :body
   field :body_html
   field :last_reply_id, type: Integer
-  field :replied_at , type: DateTime
+  field :replied_at, type: DateTime
   field :source
   field :message_id
   field :replies_count, type: Integer, default: 0
@@ -61,10 +61,10 @@ class Topic
   delegate :body, to: :last_reply, prefix: true, allow_nil: true
 
   # scopes
-  scope :last_actived, -> {  desc(:last_active_mark) }
+  scope :last_actived, -> { desc(:last_active_mark) }
   # 推荐的话题
   scope :suggest, -> { where(:suggested_at.ne => nil).desc(:suggested_at) }
-  scope :fields_for_list, -> { without(:body,:body_html) }
+  scope :fields_for_list, -> { without(:body, :body_html) }
   scope :high_likes, -> { desc(:likes_count, :_id) }
   scope :high_replies, -> { desc(:replies_count, :_id) }
   scope :no_reply, -> { where(replies_count: 0) }
@@ -86,15 +86,19 @@ class Topic
   end
 
   before_save :store_cache_fields
+
   def store_cache_fields
     self.node_name = self.node.try(:name) || ""
   end
+
   before_save :auto_space_with_title
+
   def auto_space_with_title
     self.title.auto_space!
   end
 
   before_create :init_last_active_mark_on_create
+
   def init_last_active_mark_on_create
     self.last_active_mark = Time.now.to_i
   end
@@ -136,7 +140,7 @@ class Topic
   # 删除并记录删除人
   def destroy_by(user)
     return false if user.blank?
-    self.update_attribute(:who_deleted,user.login)
+    self.update_attribute(:who_deleted, user.login)
     self.destroy
   end
 
@@ -152,7 +156,7 @@ class Topic
 
   # 所有的回复编号
   def reply_ids
-    Rails.cache.fetch([self,"reply_ids"]) do
+    Rails.cache.fetch([self, "reply_ids"]) do
       self.replies.only(:_id).map(&:_id)
     end
   end
@@ -160,4 +164,187 @@ class Topic
   def excellent?
     self.excellent >= 1
   end
+
+  #以小时为单位计算回复数量
+  def Reply.reply_hours_stat(from_time, to_time)
+    map = %Q{
+    function() {
+      emit(this.topic_id, {count: 1})
+    }
+  }
+
+    reduce = %Q{
+    function(key, values) {
+      var result = {count: 0};
+      values.forEach(function(value) {
+        result.count += value.count;
+      });
+      return result;
+    }
+  }
+
+    Reply.where(:created_at.gte => Time.now-from_time.hours, :created_at.lt => Time.now-to_time.hours).map_reduce(map, reduce).out(inline: true)
+  end
+
+  #以小时为单位计算浏览数量
+  def Impression.access_hours_stat(from_time, to_time)
+    map = %Q{
+    function() {
+      emit(this.impressionable_id, {count: 1})
+    }
+  }
+
+    reduce = %Q{
+    function(key, values) {
+      var result = {count: 0};
+      values.forEach(function(value) {
+        result.count += value.count;
+      });
+      return result;
+    }
+  }
+
+    Impression.where(:created_at.gte => Time.now-from_time.hours, :created_at.lt => Time.now-to_time.hours).map_reduce(map, reduce).out(inline: true)
+  end
+
+  #以小时为单位计算vi+3pi的值 没有进行加权
+  def self.topic_hour_score(from_time, to_time)
+    all_ids=[]
+    result={}
+
+    reply_temp={}
+    impress_temp={}
+
+    #产生的结果都是hash值的
+    Reply.reply_hours_stat(from_time, to_time).each { |p| reply_temp[p["_id"].to_i]=p["value"]["count"] }
+    Impression.access_hours_stat(from_time, to_time).each { |p| impress_temp[p["_id"].to_i]=p["value"]["count"] }
+
+    #计算合集
+    all_ids=reply_temp.keys|impress_temp.keys
+
+    all_ids.each do |t|
+      result[t]=((impress_temp[t].nil?) ? 0 : impress_temp[t])+3*((reply_temp[t].nil?) ? 0 : reply_temp[t])
+    end
+
+    return result
+  end
+
+  #计算加权后的结果 然后返回排序的topic数组
+  def self.hot_hour_topics(t)
+    result={}
+    topics=[]
+    for i in 1..t
+      result_temp=topic_hour_score(i, i-1)
+      result_temp.keys.each do |r|
+        if result[r].nil?
+          result[r]=result_temp[r]*(25-i)
+        else
+          result[r]+=result_temp[r]*(25-i)
+        end
+      end
+    end
+    #进行排序
+    result_tmp=result.sort { |a, b| a[1]<=>b[1] }.reverse
+    #选择前100项
+    if result_tmp.size>100
+      result_tmp[0..99].each do |t|
+        topics.push(Topic.find(t[0]))
+      end
+    else
+      result_tmp.each do |t|
+        topics.push(Topic.find(t[0]))
+      end
+    end
+    return topics
+  end
+
+  #以天为单位计算回复数量
+  def Reply.reply_days_stat(from_time, to_time)
+    map = %Q{
+    function() {
+      emit(this.topic_id, {count: 1})
+    }
+  }
+
+    reduce = %Q{
+    function(key, values) {
+      var result = {count: 0};
+      values.forEach(function(value) {
+        result.count += value.count;
+      });
+      return result;
+    }
+  }
+
+    Reply.where(:created_at.gte => Time.now-from_time.days, :created_at.lt => Time.now-to_time.days).map_reduce(map, reduce).out(inline: true)
+  end
+
+  #以天为单位计算浏览数量
+  def Impression.access_days_stat(from_time, to_time)
+    map = %Q{
+    function() {
+      emit(this.impressionable_id, {count: 1})
+    }
+  }
+
+    reduce = %Q{
+    function(key, values) {
+      var result = {count: 0};
+      values.forEach(function(value) {
+        result.count += value.count;
+      });
+      return result;
+    }
+  }
+
+    Impression.where(:created_at.gte => Time.now-from_time.days, :created_at.lt => Time.now-to_time.days).map_reduce(map, reduce).out(inline: true)
+  end
+
+  #以天为单位计算vi+3*pi 没有进行加权
+  def self.topic_day_score(from_time, to_time)
+    all_ids=[]
+    result={}
+
+    reply_temp={}
+    impress_temp={}
+    Reply.reply_days_stat(from_time, to_time).each { |p| reply_temp[p["_id"].to_i]=p["value"]["count"] }
+    Impression.access_days_stat(from_time, to_time).each { |p| impress_temp[p["_id"].to_i]=p["value"]["count"] }
+
+    all_ids=reply_temp.keys|impress_temp.keys
+
+    all_ids.each do |t|
+      result[t]=((impress_temp[t].nil?) ? 0 : impress_temp[t])+3*((reply_temp[t].nil?) ? 0 : reply_temp[t])
+    end
+
+    return result
+  end
+
+  #计算t天以内的加权结果 返回topic的数组
+  def self.hot_day_topics(t)
+    result={}
+    topics=[]
+    for i in 1..t
+      result_temp=topic_day_score(i, i-1)
+      result_temp.keys.each do |r|
+        if result[r].nil?
+          result[r]=result_temp[r]*(25-i)
+        else
+          result[r]+=result_temp[r]*(25-i)
+        end
+      end
+    end
+    result_tmp=result.sort { |a, b| a[1]<=>b[1] }.reverse
+    if result_tmp.size>100
+      result_tmp[0..99].each do |t|
+        topics.push(Topic.find(t[0]))
+      end
+    else
+      result_tmp.each do |t|
+        topics.push(Topic.find(t[0]))
+      end
+    end
+    return topics
+  end
+
+
 end

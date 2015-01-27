@@ -1,10 +1,12 @@
-<% cache(["sidebar_statistics",Time.now.strftime("%Y-%m-%d %H")]) do %>
-<div class="totals box">
-  <h2 class="title"><%= t("common.statics")%></h2>
-  <ul>
-    <li>社区会员: <%= User.unscoped.count %> 人</li>
-    <li>帖子数: <%= Topic.unscoped.count %> 个</li>
-    <li>回帖数: <%= Reply.unscoped.count %> 条</li>
-  </ul>
-</div>
+<% cache(["sidebar_hot_hour_topics", Time.now.strftime("%Y-%m-%d %H")], :expires_in => 10.minutes) do %>
+    <div class="totals box">
+      <h2 class="title"><%= "24小时热门话题" %></h2>
+
+      <ul>
+        <% Topic.hot_hour_topics(24).each do |item| %>
+            <li><%= link_to(truncate(item.title, length: 30), topic_path(item), title: item.title) %></li>
+        <% end %>
+      </ul>
+
+    </div>
 <% end %>
